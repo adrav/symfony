@@ -12,15 +12,16 @@
 namespace Symfony\Component\Form\Extension\Core\Type;
 
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\FormInterface;
-use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\Form\Extension\Core\DataTransformer\MoneyToLocalizedStringTransformer;
+use Symfony\Component\Form\Extension\Core\DataTransformer\NumberToLocalizedStringTransformer;
+use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\Form\FormInterface;
 use Symfony\Component\Form\FormView;
-use Symfony\Component\OptionsResolver\OptionsResolverInterface;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
 class MoneyType extends AbstractType
 {
-    private static $patterns = array();
+    protected static $patterns = array();
 
     /**
      * {@inheritdoc}
@@ -29,9 +30,9 @@ class MoneyType extends AbstractType
     {
         $builder
             ->addViewTransformer(new MoneyToLocalizedStringTransformer(
-                $options['precision'],
+                $options['scale'],
                 $options['grouping'],
-                null,
+                $options['rounding_mode'],
                 $options['divisor']
             ))
         ;
@@ -48,51 +49,58 @@ class MoneyType extends AbstractType
     /**
      * {@inheritdoc}
      */
-    public function setDefaultOptions(OptionsResolverInterface $resolver)
+    public function configureOptions(OptionsResolver $resolver)
     {
         $resolver->setDefaults(array(
-            'precision' => 2,
-            'grouping'  => false,
-            'divisor'   => 1,
-            'currency'  => 'EUR',
-            'compound'  => false,
+            'scale' => 2,
+            'grouping' => false,
+            'rounding_mode' => NumberToLocalizedStringTransformer::ROUND_HALF_UP,
+            'divisor' => 1,
+            'currency' => 'EUR',
+            'compound' => false,
         ));
+
+        $resolver->setAllowedValues('rounding_mode', array(
+            NumberToLocalizedStringTransformer::ROUND_FLOOR,
+            NumberToLocalizedStringTransformer::ROUND_DOWN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_DOWN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_EVEN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_UP,
+            NumberToLocalizedStringTransformer::ROUND_UP,
+            NumberToLocalizedStringTransformer::ROUND_CEILING,
+        ));
+
+        $resolver->setAllowedTypes('scale', 'int');
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getParent()
-    {
-        return 'field';
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function getName()
+    public function getBlockPrefix()
     {
         return 'money';
     }
 
     /**
-     * Returns the pattern for this locale
+     * Returns the pattern for this locale in UTF-8.
      *
      * The pattern contains the placeholder "{{ widget }}" where the HTML tag should
      * be inserted
      */
-    private static function getPattern($currency)
+    protected static function getPattern($currency)
     {
         if (!$currency) {
             return '{{ widget }}';
         }
 
-        if (!isset(self::$patterns[\Locale::getDefault()])) {
-            self::$patterns[\Locale::getDefault()] = array();
+        $locale = \Locale::getDefault();
+
+        if (!isset(self::$patterns[$locale])) {
+            self::$patterns[$locale] = array();
         }
 
-        if (!isset(self::$patterns[\Locale::getDefault()][$currency])) {
-            $format = new \NumberFormatter(\Locale::getDefault(), \NumberFormatter::CURRENCY);
+        if (!isset(self::$patterns[$locale][$currency])) {
+            $format = new \NumberFormatter($locale, \NumberFormatter::CURRENCY);
             $pattern = $format->formatCurrency('123', $currency);
 
             // the spacings between currency symbol and number are ignored, because
@@ -104,14 +112,14 @@ class MoneyType extends AbstractType
             preg_match('/^([^\s\xc2\xa0]*)[\s\xc2\xa0]*123(?:[,.]0+)?[\s\xc2\xa0]*([^\s\xc2\xa0]*)$/u', $pattern, $matches);
 
             if (!empty($matches[1])) {
-                self::$patterns[\Locale::getDefault()] = $matches[1].' {{ widget }}';
+                self::$patterns[$locale][$currency] = $matches[1].' {{ widget }}';
             } elseif (!empty($matches[2])) {
-                self::$patterns[\Locale::getDefault()] = '{{ widget }} '.$matches[2];
+                self::$patterns[$locale][$currency] = '{{ widget }} '.$matches[2];
             } else {
-                self::$patterns[\Locale::getDefault()] = '{{ widget }}';
+                self::$patterns[$locale][$currency] = '{{ widget }}';
             }
         }
 
-        return self::$patterns[\Locale::getDefault()];
+        return self::$patterns[$locale][$currency];
     }
 }

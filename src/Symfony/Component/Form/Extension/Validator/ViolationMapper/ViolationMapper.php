@@ -11,13 +11,12 @@
 
 namespace Symfony\Component\Form\Extension\Validator\ViolationMapper;
 
-use Symfony\Component\Form\FormInterface;
-use Symfony\Component\Form\Util\VirtualFormAwareIterator;
-use Symfony\Component\Form\Util\PropertyPathIterator;
-use Symfony\Component\Form\Util\PropertyPathBuilder;
-use Symfony\Component\Form\Util\PropertyPathIteratorInterface;
-use Symfony\Component\Form\Extension\Validator\ViolationMapper\ViolationPathIterator;
 use Symfony\Component\Form\FormError;
+use Symfony\Component\Form\FormInterface;
+use Symfony\Component\Form\Util\InheritDataAwareIterator;
+use Symfony\Component\PropertyAccess\PropertyPathBuilder;
+use Symfony\Component\PropertyAccess\PropertyPathIterator;
+use Symfony\Component\PropertyAccess\PropertyPathIteratorInterface;
 use Symfony\Component\Validator\ConstraintViolation;
 
 /**
@@ -26,22 +25,7 @@ use Symfony\Component\Validator\ConstraintViolation;
 class ViolationMapper implements ViolationMapperInterface
 {
     /**
-     * @var FormInterface
-     */
-    private $scope;
-
-    /**
-     * @var array
-     */
-    private $children;
-
-    /**
-     * @var array
-     */
-    private $rules = array();
-
-    /**
-     * @var Boolean
+     * @var bool
      */
     private $allowNonSynchronized;
 
@@ -52,12 +36,19 @@ class ViolationMapper implements ViolationMapperInterface
     {
         $this->allowNonSynchronized = $allowNonSynchronized;
 
+        // The scope is the currently found most specific form that
+        // an error should be mapped to. After setting the scope, the
+        // mapper will try to continue to find more specific matches in
+        // the children of scope. If it cannot, the error will be
+        // mapped to this scope.
+        $scope = null;
+
         $violationPath = null;
         $relativePath = null;
         $match = false;
 
         // Don't create a ViolationPath instance for empty property paths
-        if (strlen($violation->getPropertyPath()) > 0) {
+        if (\strlen($violation->getPropertyPath()) > 0) {
             $violationPath = new ViolationPath($violation->getPropertyPath());
             $relativePath = $this->reconstructPath($violationPath, $form);
         }
@@ -65,7 +56,7 @@ class ViolationMapper implements ViolationMapperInterface
         // This case happens if the violation path is empty and thus
         // the violation should be mapped to the root form
         if (null === $violationPath) {
-            $this->scope = $form;
+            $scope = $form;
         }
 
         // In general, mapping happens from the root form to the leaf forms
@@ -85,19 +76,19 @@ class ViolationMapper implements ViolationMapperInterface
             // This root will usually be $form. If the path contains
             // an unmapped form though, the last unmapped form found
             // will be the root of the path.
-            $this->setScope($relativePath->getRoot());
+            $scope = $relativePath->getRoot();
             $it = new PropertyPathIterator($relativePath);
 
-            while ($this->isValidScope() && null !== ($child = $this->matchChild($it))) {
-                $this->setScope($child);
+            while ($this->acceptsErrors($scope) && null !== ($child = $this->matchChild($scope, $it))) {
+                $scope = $child;
                 $it->next();
                 $match = true;
             }
         }
 
         // This case happens if an error happened in the data under a
-        // virtual form that does not match any of the children of
-        // the virtual form.
+        // form inheriting its parent data that does not match any of the
+        // children of that form.
         if (null !== $violationPath && !$match) {
             // If we could not map the error to anything more specific
             // than the root element, map it to the innermost directly
@@ -105,36 +96,40 @@ class ViolationMapper implements ViolationMapperInterface
             // e.g. "children[foo].children[bar].data.baz"
             // Here the innermost directly mapped child is "bar"
 
+            $scope = $form;
             $it = new ViolationPathIterator($violationPath);
-            // The overhead of setScope() is not needed anymore here
-            $this->scope = $form;
 
-            while ($this->isValidScope() && $it->valid() && $it->mapsForm()) {
-                if (!$this->scope->has($it->current())) {
+            // Note: acceptsErrors() will always return true for forms inheriting
+            // their parent data, because these forms can never be non-synchronized
+            // (they don't do any data transformation on their own)
+            while ($this->acceptsErrors($scope) && $it->valid() && $it->mapsForm()) {
+                if (!$scope->has($it->current())) {
                     // Break if we find a reference to a non-existing child
                     break;
                 }
 
-                $this->scope = $this->scope->get($it->current());
+                $scope = $scope->get($it->current());
                 $it->next();
             }
         }
 
         // Follow dot rules until we have the final target
-        $mapping = $this->scope->getConfig()->getOption('error_mapping');
+        $mapping = $scope->getConfig()->getOption('error_mapping');
 
-        while ($this->isValidScope() && isset($mapping['.'])) {
-            $dotRule = new MappingRule($this->scope, '.', $mapping['.']);
-            $this->scope = $dotRule->getTarget();
-            $mapping = $this->scope->getConfig()->getOption('error_mapping');
+        while ($this->acceptsErrors($scope) && isset($mapping['.'])) {
+            $dotRule = new MappingRule($scope, '.', $mapping['.']);
+            $scope = $dotRule->getTarget();
+            $mapping = $scope->getConfig()->getOption('error_mapping');
         }
 
         // Only add the error if the form is synchronized
-        if ($this->isValidScope()) {
-            $this->scope->addError(new FormError(
+        if ($this->acceptsErrors($scope)) {
+            $scope->addError(new FormError(
+                $violation->getMessage(),
                 $violation->getMessageTemplate(),
-                $violation->getMessageParameters(),
-                $violation->getMessagePluralization()
+                $violation->getParameters(),
+                $violation->getPlural(),
+                $violation
             ));
         }
     }
@@ -146,33 +141,38 @@ class ViolationMapper implements ViolationMapperInterface
      * If a matching child is found, it is returned. Otherwise
      * null is returned.
      *
-     * @param PropertyPathIteratorInterface $it The iterator at its current position.
+     * @param FormInterface                 $form The form to search
+     * @param PropertyPathIteratorInterface $it   The iterator at its current position
      *
-     * @return null|FormInterface The found match or null.
+     * @return FormInterface|null The found match or null
      */
-    private function matchChild(PropertyPathIteratorInterface $it)
+    private function matchChild(FormInterface $form, PropertyPathIteratorInterface $it)
     {
-        // Remember at what property path underneath "data"
-        // we are looking. Check if there is a child with that
-        // path, otherwise increase path by one more piece
+        $target = null;
         $chunk = '';
-        $foundChild = null;
-        $foundAtIndex = 0;
+        $foundAtIndex = null;
 
-        // Make the path longer until we find a matching child
-        while (true) {
-            if (!$it->valid()) {
-                return null;
+        // Construct mapping rules for the given form
+        $rules = array();
+
+        foreach ($form->getConfig()->getOption('error_mapping') as $propertyPath => $targetPath) {
+            // Dot rules are considered at the very end
+            if ('.' !== $propertyPath) {
+                $rules[] = new MappingRule($form, $propertyPath, $targetPath);
             }
+        }
 
+        $children = iterator_to_array(new \RecursiveIteratorIterator(new InheritDataAwareIterator($form)), false);
+
+        while ($it->valid()) {
             if ($it->isIndex()) {
-                $chunk .= '[' . $it->current() . ']';
+                $chunk .= '['.$it->current().']';
             } else {
-                $chunk .= ('' === $chunk ? '' : '.') . $it->current();
+                $chunk .= ('' === $chunk ? '' : '.').$it->current();
             }
 
             // Test mapping rules as long as we have any
-            foreach ($this->rules as $key => $rule) {
+            foreach ($rules as $key => $rule) {
                 /* @var MappingRule $rule */
 
                 // Mapping rule matches completely, terminate.
@@ -182,48 +182,40 @@ class ViolationMapper implements ViolationMapperInterface
 
                 // Keep only rules that have $chunk as prefix
                 if (!$rule->isPrefix($chunk)) {
-                    unset($this->rules[$key]);
+                    unset($rules[$key]);
                 }
             }
 
-            // Test children unless we already found one
-            if (null === $foundChild) {
-                foreach ($this->children as $child) {
-                    /* @var FormInterface $child */
-                    $childPath = (string) $child->getPropertyPath();
-
-                    // Child found, move scope inwards
-                    if ($chunk === $childPath) {
-                        $foundChild = $child;
-                        $foundAtIndex = $it->key();
-                    }
+            /** @var FormInterface $child */
+            foreach ($children as $i => $child) {
+                $childPath = (string) $child->getPropertyPath();
+                if ($childPath === $chunk) {
+                    $target = $child;
+                    $foundAtIndex = $it->key();
+                } elseif (0 === strpos($childPath, $chunk)) {
+                    continue;
                 }
+
+                unset($children[$i]);
             }
 
-            // Add element to the chunk
             $it->next();
-
-            // If we reached the end of the path or if there are no
-            // more matching mapping rules, return the found child
-            if (null !== $foundChild && (!$it->valid() || count($this->rules) === 0)) {
-                // Reset index in case we tried to find mapping
-                // rules further down the path
-                $it->seek($foundAtIndex);
-
-                return $foundChild;
-            }
         }
 
-        return null;
+        if (null !== $foundAtIndex) {
+            $it->seek($foundAtIndex);
+        }
+
+        return $target;
     }
 
     /**
      * Reconstructs a property path from a violation path and a form tree.
      *
-     * @param  ViolationPath $violationPath The violation path.
-     * @param  FormInterface $origin        The root form of the tree.
+     * @param ViolationPath $violationPath The violation path
+     * @param FormInterface $origin        The root form of the tree
      *
-     * @return RelativePath The reconstructed path.
+     * @return RelativePath The reconstructed path
      */
     private function reconstructPath(ViolationPath $violationPath, FormInterface $origin)
     {
@@ -245,8 +237,8 @@ class ViolationMapper implements ViolationMapperInterface
             // Process child form
             $scope = $scope->get($it->current());
 
-            if ($scope->getConfig()->getVirtual()) {
-                // Form is virtual
+            if ($scope->getConfig()->getInheritData()) {
+                // Form inherits its parent data
                 // Cut the piece out of the property path and proceed
                 $propertyPathBuilder->remove($i);
             } elseif (!$scope->getConfig()->getMapped()) {
@@ -257,7 +249,7 @@ class ViolationMapper implements ViolationMapperInterface
                 $propertyPathBuilder->remove(0, $i + 1);
                 $i = 0;
             } else {
-                /* @var \Symfony\Component\Form\Util\PropertyPathInterface $propertyPath */
+                /* @var \Symfony\Component\PropertyAccess\PropertyPathInterface $propertyPath */
                 $propertyPath = $scope->getPropertyPath();
 
                 if (null === $propertyPath) {
@@ -277,35 +269,13 @@ class ViolationMapper implements ViolationMapperInterface
     }
 
     /**
-     * Sets the scope of the mapper to the given form.
-     *
-     * The scope is the currently found most specific form that
-     * an error should be mapped to. After setting the scope, the
-     * mapper will try to continue to find more specific matches in
-     * the children of scope. If it cannot, the error will be
-     * mapped to this scope.
-     *
-     * @param FormInterface $form The current scope.
+     * @return bool
      */
-    private function setScope(FormInterface $form)
+    private function acceptsErrors(FormInterface $form)
     {
-        $this->scope = $form;
-        $this->children = new \RecursiveIteratorIterator(
-            new VirtualFormAwareIterator($form->all())
-        );
-        foreach ($form->getConfig()->getOption('error_mapping') as $propertyPath => $targetPath) {
-            // Dot rules are considered at the very end
-            if ('.' !== $propertyPath) {
-                $this->rules[] = new MappingRule($form, $propertyPath, $targetPath);
-            }
-        }
-    }
-
-    /**
-     * @return Boolean
-     */
-    private function isValidScope()
-    {
-        return $this->allowNonSynchronized || $this->scope->isSynchronized();
+        // Ignore non-submitted forms. This happens, for example, in PATCH
+        // requests.
+        // https://github.com/symfony/symfony/pull/10567
+        return $form->isSubmitted() && ($this->allowNonSynchronized || $form->isSynchronized());
     }
 }

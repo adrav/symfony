@@ -12,7 +12,8 @@
 namespace Symfony\Component\Form\Extension\Core\DataTransformer;
 
 use Symfony\Component\Form\DataTransformerInterface;
-use Symfony\Component\Form\Exception\UnexpectedTypeException;
+use Symfony\Component\Form\Exception\InvalidArgumentException;
+use Symfony\Component\Form\Exception\TransformationFailedException;
 
 /**
  * Transforms between a Boolean and a string.
@@ -22,64 +23,64 @@ use Symfony\Component\Form\Exception\UnexpectedTypeException;
  */
 class BooleanToStringTransformer implements DataTransformerInterface
 {
-    /**
-     * The value emitted upon transform if the input is true
-     * @var string
-     */
     private $trueValue;
 
+    private $falseValues;
+
     /**
-     * Sets the value emitted upon transform if the input is true.
-     *
-     * @param string $trueValue
+     * @param string $trueValue   The value emitted upon transform if the input is true
+     * @param array  $falseValues
      */
-    public function __construct($trueValue)
+    public function __construct(string $trueValue, array $falseValues = array(null))
     {
         $this->trueValue = $trueValue;
+        $this->falseValues = $falseValues;
+        if (\in_array($this->trueValue, $this->falseValues, true)) {
+            throw new InvalidArgumentException('The specified "true" value is contained in the false-values');
+        }
     }
 
     /**
      * Transforms a Boolean into a string.
      *
-     * @param Boolean $value Boolean value.
+     * @param bool $value Boolean value
      *
-     * @return string String value.
+     * @return string String value
      *
-     * @throws UnexpectedTypeException if the given value is not a Boolean
+     * @throws TransformationFailedException if the given value is not a Boolean
      */
     public function transform($value)
     {
         if (null === $value) {
-            return null;
+            return;
         }
 
-        if (!is_bool($value)) {
-            throw new UnexpectedTypeException($value, 'Boolean');
+        if (!\is_bool($value)) {
+            throw new TransformationFailedException('Expected a Boolean.');
         }
 
-        return true === $value ? $this->trueValue : null;
+        return $value ? $this->trueValue : null;
     }
 
     /**
      * Transforms a string into a Boolean.
      *
-     * @param string $value String value.
+     * @param string $value String value
      *
-     * @return Boolean Boolean value.
+     * @return bool Boolean value
      *
-     * @throws UnexpectedTypeException if the given value is not a string
+     * @throws TransformationFailedException if the given value is not a string
      */
     public function reverseTransform($value)
     {
-        if (null === $value) {
+        if (\in_array($value, $this->falseValues, true)) {
             return false;
         }
 
-        if (!is_string($value)) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!\is_string($value)) {
+            throw new TransformationFailedException('Expected a string.');
         }
 
         return true;
     }
-
 }

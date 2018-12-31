@@ -11,44 +11,48 @@
 
 namespace Symfony\Component\Serializer\Encoder;
 
+use Symfony\Component\Serializer\Exception\NotEncodableValueException;
+
 /**
- * Encodes JSON data
+ * Encodes JSON data.
  *
  * @author Sander Coolen <sander@jibber.nl>
  */
 class JsonEncode implements EncoderInterface
 {
-    private $options ;
-    private $lastError = JSON_ERROR_NONE;
+    const OPTIONS = 'json_encode_options';
 
-    public function __construct($bitmask = 0)
+    private $defaultContext = array(
+        self::OPTIONS => 0,
+    );
+
+    /**
+     * @param array $defaultContext
+     */
+    public function __construct($defaultContext = array())
     {
-        $this->options = $bitmask;
+        if (!\is_array($defaultContext)) {
+            @trigger_error(sprintf('Passing an integer as first parameter of the "%s()" method is deprecated since Symfony 4.2, use the "json_encode_options" key of the context instead.', __METHOD__), E_USER_DEPRECATED);
+
+            $this->defaultContext[self::OPTIONS] = (int) $defaultContext;
+        } else {
+            $this->defaultContext = array_merge($this->defaultContext, $defaultContext);
+        }
     }
 
     /**
-     * Returns the last encoding error (if any)
+     * Encodes PHP data to a JSON string.
      *
-     * @return integer
-     *
-     * @see http://php.net/manual/en/function.json-last-error.php json_last_error
+     * {@inheritdoc}
      */
-    public function getLastError()
+    public function encode($data, $format, array $context = array())
     {
-        return $this->lastError;
-    }
+        $jsonEncodeOptions = $context[self::OPTIONS] ?? $this->defaultContext[self::OPTIONS];
+        $encodedJson = json_encode($data, $jsonEncodeOptions);
 
-    /**
-     * Encodes PHP data to a JSON string
-     *
-     * @param mixed $data
-     *
-     * @return string
-     */
-    public function encode($data, $format)
-    {
-        $encodedJson = json_encode($data, $this->options);
-        $this->lastError = json_last_error();
+        if (JSON_ERROR_NONE !== json_last_error() && (false === $encodedJson || !($jsonEncodeOptions & JSON_PARTIAL_OUTPUT_ON_ERROR))) {
+            throw new NotEncodableValueException(json_last_error_msg());
+        }
 
         return $encodedJson;
     }

@@ -21,20 +21,31 @@ use Symfony\Component\Config\Definition\Exception\InvalidTypeException;
 class FloatNode extends NumericNode
 {
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function validateType($value)
     {
         // Integers are also accepted, we just cast them
-        if (is_int($value)) {
+        if (\is_int($value)) {
             $value = (float) $value;
         }
 
-        if (!is_float($value)) {
-            $ex = new InvalidTypeException(sprintf('Invalid type for path "%s". Expected float, but got %s.', $this->getPath(), gettype($value)));
+        if (!\is_float($value)) {
+            $ex = new InvalidTypeException(sprintf('Invalid type for path "%s". Expected float, but got %s.', $this->getPath(), \gettype($value)));
+            if ($hint = $this->getInfo()) {
+                $ex->addHint($hint);
+            }
             $ex->setPath($this->getPath());
 
             throw $ex;
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function getValidPlaceholderTypes(): array
+    {
+        return array('float');
     }
 }

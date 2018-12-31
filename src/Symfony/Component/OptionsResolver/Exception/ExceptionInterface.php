@@ -12,10 +12,10 @@
 namespace Symfony\Component\OptionsResolver\Exception;
 
 /**
- * Marker interface for the Options component.
+ * Marker interface for all exceptions thrown by the OptionsResolver component.
  *
  * @author Bernhard Schussek <bschussek@gmail.com>
  */
-interface ExceptionInterface
+interface ExceptionInterface extends \Throwable
 {
 }

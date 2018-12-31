@@ -11,34 +11,44 @@
 
 namespace Symfony\Component\Form\Extension\Csrf;
 
-use Symfony\Component\Form\Extension\Csrf\Type;
-use Symfony\Component\Form\Extension\Csrf\CsrfProvider\CsrfProviderInterface;
 use Symfony\Component\Form\AbstractExtension;
+use Symfony\Component\Security\Csrf\CsrfTokenManagerInterface;
+use Symfony\Component\Translation\TranslatorInterface as LegacyTranslatorInterface;
+use Symfony\Contracts\Translation\TranslatorInterface;
 
 /**
  * This extension protects forms by using a CSRF token.
+ *
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class CsrfExtension extends AbstractExtension
 {
-    private $csrfProvider;
+    private $tokenManager;
+    private $translator;
+    private $translationDomain;
 
     /**
-     * Constructor.
-     *
-     * @param CsrfProviderInterface $csrfProvider The CSRF provider
+     * @param CsrfTokenManagerInterface $tokenManager      The CSRF token manager
+     * @param TranslatorInterface|null  $translator        The translator for translating error messages
+     * @param string|null               $translationDomain The translation domain for translating
      */
-    public function __construct(CsrfProviderInterface $csrfProvider)
+    public function __construct(CsrfTokenManagerInterface $tokenManager, $translator = null, string $translationDomain = null)
     {
-        $this->csrfProvider = $csrfProvider;
+        if (null !== $translator && !$translator instanceof LegacyTranslatorInterface && !$translator instanceof TranslatorInterface) {
+            throw new \TypeError(sprintf('Argument 2 passed to %s() must be an instance of %s, %s given.', __METHOD__, TranslatorInterface::class, \is_object($translator) ? \get_class($translator) : \gettype($translator)));
+        }
+        $this->tokenManager = $tokenManager;
+        $this->translator = $translator;
+        $this->translationDomain = $translationDomain;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function loadTypeExtensions()
     {
         return array(
-            new Type\FormTypeCsrfExtension($this->csrfProvider),
+            new Type\FormTypeCsrfExtension($this->tokenManager, true, '_token', $this->translator, $this->translationDomain),
         );
     }
 }

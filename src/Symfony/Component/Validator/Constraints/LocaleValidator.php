@@ -11,36 +11,49 @@
 
 namespace Symfony\Component\Validator\Constraints;
 
+use Symfony\Component\Intl\Intl;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
 use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * Validates whether a value is a valid locale code
+ * Validates whether a value is a valid locale code.
  *
  * @author Bernhard Schussek <bschussek@gmail.com>
- *
- * @api
  */
 class LocaleValidator extends ConstraintValidator
 {
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function validate($value, Constraint $constraint)
     {
+        if (!$constraint instanceof Locale) {
+            throw new UnexpectedTypeException($constraint, __NAMESPACE__.'\Locale');
+        }
+
         if (null === $value || '' === $value) {
             return;
         }
 
-        if (!is_scalar($value) && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!is_scalar($value) && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
-        $value = (string) $value;
+        $inputValue = (string) $value;
+        $value = $inputValue;
+        if ($constraint->canonicalize) {
+            $value = \Locale::canonicalize($value);
+        }
+        $localeBundle = Intl::getLocaleBundle();
+        $locales = $localeBundle->getLocaleNames();
 
-        if (!in_array($value, \Symfony\Component\Locale\Locale::getLocales())) {
-            $this->context->addViolation($constraint->message, array('{{ value }}' => $value));
+        if (!isset($locales[$value]) && !\in_array($value, $localeBundle->getAliases(), true)) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($inputValue))
+                ->setCode(Locale::NO_SUCH_LOCALE_ERROR)
+                ->addViolation();
         }
     }
 }

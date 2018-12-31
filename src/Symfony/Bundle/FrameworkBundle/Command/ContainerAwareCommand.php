@@ -12,35 +12,46 @@
 namespace Symfony\Bundle\FrameworkBundle\Command;
 
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\ContainerAwareInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+
+@trigger_error(sprintf('The "%s" class is deprecated since Symfony 4.2, use "%s" with dependency injection instead.', ContainerAwareCommand::class, Command::class), E_USER_DEPRECATED);
 
 /**
  * Command.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @deprecated since Symfony 4.2, use {@see Command} instead.
  */
 abstract class ContainerAwareCommand extends Command implements ContainerAwareInterface
 {
     /**
-     * @var ContainerInterface
+     * @var ContainerInterface|null
      */
     private $container;
 
     /**
      * @return ContainerInterface
+     *
+     * @throws \LogicException
      */
     protected function getContainer()
     {
         if (null === $this->container) {
-            $this->container = $this->getApplication()->getKernel()->getContainer();
+            $application = $this->getApplication();
+            if (null === $application) {
+                throw new \LogicException('The container cannot be retrieved as the application instance is not yet set.');
+            }
+
+            $this->container = $application->getKernel()->getContainer();
         }
 
         return $this->container;
     }
 
     /**
-     * @see ContainerAwareInterface::setContainer()
+     * {@inheritdoc}
      */
     public function setContainer(ContainerInterface $container = null)
     {

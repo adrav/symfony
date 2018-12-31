@@ -11,11 +11,12 @@
 
 namespace Symfony\Component\Config\Tests\Definition\Builder;
 
-use Symfony\Component\Config\Definition\Builder\IntegerNodeDefinition as NumericNodeDefinition;
-use Symfony\Component\Config\Definition\Builder\IntegerNodeDefinition;
+use PHPUnit\Framework\TestCase;
 use Symfony\Component\Config\Definition\Builder\FloatNodeDefinition;
+use Symfony\Component\Config\Definition\Builder\IntegerNodeDefinition;
+use Symfony\Component\Config\Definition\Builder\IntegerNodeDefinition as NumericNodeDefinition;
 
-class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
+class NumericNodeDefinitionTest extends TestCase
 {
     /**
      * @expectedException \InvalidArgumentException
@@ -38,8 +39,8 @@ class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
     }
 
     /**
-     * @expectedException Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
-     * @expectedExceptionMessage The value 4 is too small for path "foo". Should be greater than: 5
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
+     * @expectedExceptionMessage The value 4 is too small for path "foo". Should be greater than or equal to 5
      */
     public function testIntegerMinAssertion()
     {
@@ -48,8 +49,8 @@ class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
     }
 
     /**
-     * @expectedException Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
-     * @expectedExceptionMessage The value 4 is too big for path "foo". Should be less than: 3
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
+     * @expectedExceptionMessage The value 4 is too big for path "foo". Should be less than or equal to 3
      */
     public function testIntegerMaxAssertion()
     {
@@ -65,8 +66,8 @@ class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
     }
 
     /**
-     * @expectedException Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
-     * @expectedExceptionMessage The value 400 is too small for path "foo". Should be greater than: 500
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
+     * @expectedExceptionMessage The value 400 is too small for path "foo". Should be greater than or equal to 500
      */
     public function testFloatMinAssertion()
     {
@@ -75,8 +76,8 @@ class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
     }
 
     /**
-     * @expectedException Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
-     * @expectedExceptionMessage The value 4.3 is too big for path "foo". Should be less than: 0.3
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
+     * @expectedExceptionMessage The value 4.3 is too big for path "foo". Should be less than or equal to 0.3
      */
     public function testFloatMaxAssertion()
     {
@@ -89,5 +90,15 @@ class NumericNodeDefinitionTest extends \PHPUnit_Framework_TestCase
         $def = new FloatNodeDefinition('foo');
         $node = $def->min(3.0)->max(7e2)->getNode();
         $this->assertEquals(4.5, $node->finalize(4.5));
+    }
+
+    /**
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidDefinitionException
+     * @expectedExceptionMessage ->cannotBeEmpty() is not applicable to NumericNodeDefinition.
+     */
+    public function testCannotBeEmptyThrowsAnException()
+    {
+        $def = new NumericNodeDefinition('foo');
+        $def->cannotBeEmpty();
     }
 }

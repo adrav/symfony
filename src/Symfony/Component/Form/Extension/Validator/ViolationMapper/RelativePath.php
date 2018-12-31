@@ -12,23 +12,16 @@
 namespace Symfony\Component\Form\Extension\Validator\ViolationMapper;
 
 use Symfony\Component\Form\FormInterface;
-use Symfony\Component\Form\Util\PropertyPath;
+use Symfony\Component\PropertyAccess\PropertyPath;
 
 /**
  * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class RelativePath extends PropertyPath
 {
-    /**
-     * @var FormInterface
-     */
     private $root;
 
-    /**
-     * @param FormInterface $root
-     * @param string        $propertyPath
-     */
-    public function __construct(FormInterface $root, $propertyPath)
+    public function __construct(FormInterface $root, string $propertyPath)
     {
         parent::__construct($propertyPath);
 

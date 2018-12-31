@@ -11,7 +11,8 @@
 
 namespace Symfony\Component\Form;
 
-use Symfony\Component\OptionsResolver\OptionsResolverInterface;
+use Symfony\Component\Form\Exception\LogicException;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
 /**
  * @author Bernhard Schussek <bschussek@gmail.com>
@@ -42,35 +43,25 @@ abstract class AbstractTypeExtension implements FormTypeExtensionInterface
     /**
      * {@inheritdoc}
      */
-    public function setDefaultOptions(OptionsResolverInterface $resolver)
+    public function configureOptions(OptionsResolver $resolver)
     {
-        $resolver->setDefaults($this->getDefaultOptions());
-        $resolver->addAllowedValues($this->getAllowedOptionValues());
     }
 
     /**
-     * Overrides the default options form the extended type.
+     * {@inheritdoc}
      *
-     * @return array
-     *
-     * @deprecated Deprecated since version 2.1, to be removed in 2.3.
-     *             Use {@link setDefaultOptions()} instead.
+     * @deprecated since Symfony 4.2, use getExtendedTypes() instead.
      */
-    public function getDefaultOptions()
+    public function getExtendedType()
     {
-        return array();
-    }
+        if (!method_exists($this, 'getExtendedTypes')) {
+            throw new LogicException(sprintf('You need to implement the static getExtendedTypes() method when implementing the %s in %s.', FormTypeExtensionInterface::class, static::class));
+        }
 
-    /**
-     * Returns the allowed option values for each option (if any).
-     *
-     * @return array The allowed option values
-     *
-     * @deprecated Deprecated since version 2.1, to be removed in 2.3.
-     *             Use {@link setDefaultOptions()} instead.
-     */
-    public function getAllowedOptionValues()
-    {
-        return array();
+        @trigger_error(sprintf('The %s::getExtendedType() method is deprecated since Symfony 4.2 and will be removed in 5.0. Use getExtendedTypes() instead.', \get_class($this)), E_USER_DEPRECATED);
+
+        foreach (static::getExtendedTypes() as $extendedType) {
+            return $extendedType;
+        }
     }
 }

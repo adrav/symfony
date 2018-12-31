@@ -11,9 +11,10 @@
 
 namespace Symfony\Component\Translation\Tests;
 
+use PHPUnit\Framework\TestCase;
 use Symfony\Component\Translation\MessageCatalogue;
 
-class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
+class MessageCatalogueTest extends TestCase
 {
     public function testGetLocale()
     {
@@ -24,9 +25,9 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
 
     public function testGetDomains()
     {
-        $catalogue = new MessageCatalogue('en', array('domain1' => array(), 'domain2' => array()));
+        $catalogue = new MessageCatalogue('en', array('domain1' => array(), 'domain2' => array(), 'domain2+intl-icu' => array(), 'domain3+intl-icu' => array()));
 
-        $this->assertEquals(array('domain1', 'domain2'), $catalogue->getDomains());
+        $this->assertEquals(array('domain1', 'domain2', 'domain3'), $catalogue->getDomains());
     }
 
     public function testAll()
@@ -36,24 +37,43 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals(array('foo' => 'foo'), $catalogue->all('domain1'));
         $this->assertEquals(array(), $catalogue->all('domain88'));
         $this->assertEquals($messages, $catalogue->all());
+
+        $messages = array('domain1+intl-icu' => array('foo' => 'bar')) + $messages + array(
+            'domain2+intl-icu' => array('bar' => 'foo'),
+            'domain3+intl-icu' => array('biz' => 'biz'),
+        );
+        $catalogue = new MessageCatalogue('en', $messages);
+
+        $this->assertEquals(array('foo' => 'bar'), $catalogue->all('domain1'));
+        $this->assertEquals(array('bar' => 'foo'), $catalogue->all('domain2'));
+        $this->assertEquals(array('biz' => 'biz'), $catalogue->all('domain3'));
+
+        $messages = array(
+            'domain1' => array('foo' => 'bar'),
+            'domain2' => array('bar' => 'foo'),
+            'domain3' => array('biz' => 'biz'),
+        );
+        $this->assertEquals($messages, $catalogue->all());
     }
 
     public function testHas()
     {
-        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
+        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2+intl-icu' => array('bar' => 'bar')));
 
         $this->assertTrue($catalogue->has('foo', 'domain1'));
+        $this->assertTrue($catalogue->has('bar', 'domain2'));
         $this->assertFalse($catalogue->has('bar', 'domain1'));
         $this->assertFalse($catalogue->has('foo', 'domain88'));
     }
 
     public function testGetSet()
     {
-        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
+        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar'), 'domain2+intl-icu' => array('bar' => 'foo')));
         $catalogue->set('foo1', 'foo1', 'domain1');
 
         $this->assertEquals('foo', $catalogue->get('foo', 'domain1'));
         $this->assertEquals('foo1', $catalogue->get('foo1', 'domain1'));
+        $this->assertEquals('foo', $catalogue->get('bar', 'domain2'));
     }
 
     public function testAdd()
@@ -74,7 +94,7 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
 
     public function testReplace()
     {
-        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
+        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain1+intl-icu' => array('bar' => 'bar')));
         $catalogue->replace($messages = array('foo1' => 'foo1'), 'domain1');
 
         $this->assertEquals($messages, $catalogue->all('domain1'));
@@ -82,60 +102,61 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
 
     public function testAddCatalogue()
     {
-        if (!class_exists('Symfony\Component\Config\Loader\Loader')) {
-            $this->markTestSkipped('The "Config" component is not available');
-        }
-
-        $r = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r->expects($this->any())->method('__toString')->will($this->returnValue('r'));
 
-        $r1 = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r1 = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r1->expects($this->any())->method('__toString')->will($this->returnValue('r1'));
 
-        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
+        $catalogue = new MessageCatalogue('en', array('domain1' => array('foo' => 'foo')));
         $catalogue->addResource($r);
 
-        $catalogue1 = new MessageCatalogue('en', array('domain1' => array('foo1' => 'foo1')));
+        $catalogue1 = new MessageCatalogue('en', array('domain1' => array('foo1' => 'foo1'), 'domain2+intl-icu' => array('bar' => 'bar')));
         $catalogue1->addResource($r1);
 
         $catalogue->addCatalogue($catalogue1);
 
         $this->assertEquals('foo', $catalogue->get('foo', 'domain1'));
         $this->assertEquals('foo1', $catalogue->get('foo1', 'domain1'));
+        $this->assertEquals('bar', $catalogue->get('bar', 'domain2'));
+        $this->assertEquals('bar', $catalogue->get('bar', 'domain2+intl-icu'));
 
         $this->assertEquals(array($r, $r1), $catalogue->getResources());
     }
 
     public function testAddFallbackCatalogue()
     {
-        if (!class_exists('Symfony\Component\Config\Loader\Loader')) {
-            $this->markTestSkipped('The "Config" component is not available');
-        }
-
-        $r = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r->expects($this->any())->method('__toString')->will($this->returnValue('r'));
 
-        $r1 = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r1 = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r1->expects($this->any())->method('__toString')->will($this->returnValue('r1'));
 
-        $catalogue = new MessageCatalogue('en_US', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
+        $r2 = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
+        $r2->expects($this->any())->method('__toString')->will($this->returnValue('r2'));
+
+        $catalogue = new MessageCatalogue('fr_FR', array('domain1' => array('foo' => 'foo'), 'domain2' => array('bar' => 'bar')));
         $catalogue->addResource($r);
 
-        $catalogue1 = new MessageCatalogue('en', array('domain1' => array('foo' => 'bar', 'foo1' => 'foo1')));
+        $catalogue1 = new MessageCatalogue('fr', array('domain1' => array('foo' => 'bar', 'foo1' => 'foo1')));
         $catalogue1->addResource($r1);
 
+        $catalogue2 = new MessageCatalogue('en');
+        $catalogue2->addResource($r2);
+
         $catalogue->addFallbackCatalogue($catalogue1);
+        $catalogue1->addFallbackCatalogue($catalogue2);
 
         $this->assertEquals('foo', $catalogue->get('foo', 'domain1'));
         $this->assertEquals('foo1', $catalogue->get('foo1', 'domain1'));
 
-        $this->assertEquals(array($r, $r1), $catalogue->getResources());
+        $this->assertEquals(array($r, $r1, $r2), $catalogue->getResources());
     }
 
     /**
-     * @expectedException LogicException
+     * @expectedException \Symfony\Component\Translation\Exception\LogicException
      */
-    public function testAddFallbackCatalogueWithCircularReference()
+    public function testAddFallbackCatalogueWithParentCircularReference()
     {
         $main = new MessageCatalogue('en_US');
         $fallback = new MessageCatalogue('fr_FR');
@@ -145,7 +166,21 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
     }
 
     /**
-     * @expectedException LogicException
+     * @expectedException \Symfony\Component\Translation\Exception\LogicException
+     */
+    public function testAddFallbackCatalogueWithFallbackCircularReference()
+    {
+        $fr = new MessageCatalogue('fr');
+        $en = new MessageCatalogue('en');
+        $es = new MessageCatalogue('es');
+
+        $fr->addFallbackCatalogue($en);
+        $es->addFallbackCatalogue($en);
+        $en->addFallbackCatalogue($fr);
+    }
+
+    /**
+     * @expectedException \Symfony\Component\Translation\Exception\LogicException
      */
     public function testAddCatalogueWhenLocaleIsNotTheSameAsTheCurrentOne()
     {
@@ -155,19 +190,54 @@ class MessageCatalogueTest extends \PHPUnit_Framework_TestCase
 
     public function testGetAddResource()
     {
-        if (!class_exists('Symfony\Component\Config\Loader\Loader')) {
-            $this->markTestSkipped('The "Config" component is not available');
-        }
-
         $catalogue = new MessageCatalogue('en');
-        $r = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r->expects($this->any())->method('__toString')->will($this->returnValue('r'));
         $catalogue->addResource($r);
         $catalogue->addResource($r);
-        $r1 = $this->getMock('Symfony\Component\Config\Resource\ResourceInterface');
+        $r1 = $this->getMockBuilder('Symfony\Component\Config\Resource\ResourceInterface')->getMock();
         $r1->expects($this->any())->method('__toString')->will($this->returnValue('r1'));
         $catalogue->addResource($r1);
 
         $this->assertEquals(array($r, $r1), $catalogue->getResources());
+    }
+
+    public function testMetadataDelete()
+    {
+        $catalogue = new MessageCatalogue('en');
+        $this->assertEquals(array(), $catalogue->getMetadata('', ''), 'Metadata is empty');
+        $catalogue->deleteMetadata('key', 'messages');
+        $catalogue->deleteMetadata('', 'messages');
+        $catalogue->deleteMetadata();
+    }
+
+    public function testMetadataSetGetDelete()
+    {
+        $catalogue = new MessageCatalogue('en');
+        $catalogue->setMetadata('key', 'value');
+        $this->assertEquals('value', $catalogue->getMetadata('key', 'messages'), "Metadata 'key' = 'value'");
+
+        $catalogue->setMetadata('key2', array());
+        $this->assertEquals(array(), $catalogue->getMetadata('key2', 'messages'), 'Metadata key2 is array');
+
+        $catalogue->deleteMetadata('key2', 'messages');
+        $this->assertNull($catalogue->getMetadata('key2', 'messages'), 'Metadata key2 should is deleted.');
+
+        $catalogue->deleteMetadata('key2', 'domain');
+        $this->assertNull($catalogue->getMetadata('key2', 'domain'), 'Metadata key2 should is deleted.');
+    }
+
+    public function testMetadataMerge()
+    {
+        $cat1 = new MessageCatalogue('en');
+        $cat1->setMetadata('a', 'b');
+        $this->assertEquals(array('messages' => array('a' => 'b')), $cat1->getMetadata('', ''), 'Cat1 contains messages metadata.');
+
+        $cat2 = new MessageCatalogue('en');
+        $cat2->setMetadata('b', 'c', 'domain');
+        $this->assertEquals(array('domain' => array('b' => 'c')), $cat2->getMetadata('', ''), 'Cat2 contains domain metadata.');
+
+        $cat1->addCatalogue($cat2);
+        $this->assertEquals(array('messages' => array('a' => 'b'), 'domain' => array('b' => 'c')), $cat1->getMetadata('', ''), 'Cat1 contains merged metadata.');
     }
 }

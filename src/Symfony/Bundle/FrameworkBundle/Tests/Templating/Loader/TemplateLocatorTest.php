@@ -33,6 +33,20 @@ class TemplateLocatorTest extends TestCase
         $locator = new TemplateLocator($fileLocator);
 
         $this->assertEquals('/path/to/template', $locator->locate($template));
+
+        // Assert cache is used as $fileLocator->locate should be called only once
+        $this->assertEquals('/path/to/template', $locator->locate($template));
+    }
+
+    public function testLocateATemplateFromCacheDir()
+    {
+        $template = new TemplateReference('bundle', 'controller', 'name', 'format', 'engine');
+
+        $fileLocator = $this->getFileLocator();
+
+        $locator = new TemplateLocator($fileLocator, __DIR__.'/../../Fixtures');
+
+        $this->assertEquals(realpath(__DIR__.'/../../Fixtures/Resources/views/this.is.a.template.format.engine'), $locator->locate($template));
     }
 
     public function testThrowsExceptionWhenTemplateNotFound()
@@ -46,7 +60,7 @@ class TemplateLocatorTest extends TestCase
         $fileLocator
             ->expects($this->once())
             ->method('locate')
-            ->will($this->throwException(new \InvalidArgumentException($errorMessage)))
+            ->willThrowException(new \InvalidArgumentException($errorMessage))
         ;
 
         $locator = new TemplateLocator($fileLocator);

@@ -11,9 +11,6 @@
 
 namespace Symfony\Component\Form\Extension\Core\DataTransformer;
 
-use Symfony\Component\Form\Exception\TransformationFailedException;
-use Symfony\Component\Form\Exception\UnexpectedTypeException;
-
 /**
  * Transforms between an integer and a localized number with grouping
  * (each thousand) and comma separators.
@@ -23,32 +20,30 @@ use Symfony\Component\Form\Exception\UnexpectedTypeException;
 class IntegerToLocalizedStringTransformer extends NumberToLocalizedStringTransformer
 {
     /**
-     * {@inheritDoc}
+     * Constructs a transformer.
+     *
+     * @param bool $grouping     Whether thousands should be grouped
+     * @param int  $roundingMode One of the ROUND_ constants in this class
+     */
+    public function __construct($grouping = false, $roundingMode = self::ROUND_DOWN)
+    {
+        if (\is_int($grouping) || \is_bool($roundingMode) || 2 < \func_num_args()) {
+            @trigger_error(sprintf('Passing a precision as the first value to %s::__construct() is deprecated since Symfony 4.2 and support for it will be dropped in 5.0.', __CLASS__), E_USER_DEPRECATED);
+
+            $grouping = $roundingMode;
+            $roundingMode = 2 < \func_num_args() ? func_get_arg(2) : self::ROUND_DOWN;
+        }
+
+        parent::__construct(0, $grouping, $roundingMode);
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function reverseTransform($value)
     {
-        if (!is_string($value)) {
-            throw new UnexpectedTypeException($value, 'string');
-        }
+        $result = parent::reverseTransform($value);
 
-        if ('' === $value) {
-            return null;
-        }
-
-        if ('NaN' === $value) {
-            throw new TransformationFailedException('"NaN" is not a valid integer');
-        }
-
-        $formatter = $this->getNumberFormatter();
-        $value = $formatter->parse(
-            $value,
-            PHP_INT_SIZE == 8 ? $formatter::TYPE_INT64 : $formatter::TYPE_INT32
-        );
-
-        if (intl_is_failure($formatter->getErrorCode())) {
-            throw new TransformationFailedException($formatter->getErrorMessage());
-        }
-
-        return $value;
+        return null !== $result ? (int) $result : null;
     }
 }

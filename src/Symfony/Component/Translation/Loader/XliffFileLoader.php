@@ -11,123 +11,189 @@
 
 namespace Symfony\Component\Translation\Loader;
 
-use Symfony\Component\Translation\MessageCatalogue;
 use Symfony\Component\Config\Resource\FileResource;
+use Symfony\Component\Config\Util\XmlUtils;
+use Symfony\Component\Translation\Exception\InvalidResourceException;
+use Symfony\Component\Translation\Exception\NotFoundResourceException;
+use Symfony\Component\Translation\MessageCatalogue;
+use Symfony\Component\Translation\Util\XliffUtils;
 
 /**
  * XliffFileLoader loads translations from XLIFF files.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 class XliffFileLoader implements LoaderInterface
 {
     /**
      * {@inheritdoc}
-     *
-     * @api
      */
     public function load($resource, $locale, $domain = 'messages')
     {
         if (!stream_is_local($resource)) {
-            throw new \InvalidArgumentException(sprintf('This is not a local file "%s".', $resource));
+            throw new InvalidResourceException(sprintf('This is not a local file "%s".', $resource));
         }
 
-        $xml = $this->parseFile($resource);
-        $xml->registerXPathNamespace('xliff', 'urn:oasis:names:tc:xliff:document:1.2');
+        if (!file_exists($resource)) {
+            throw new NotFoundResourceException(sprintf('File "%s" not found.', $resource));
+        }
 
         $catalogue = new MessageCatalogue($locale);
-        foreach ($xml->xpath('//xliff:trans-unit') as $translation) {
-            if (2 !== count($translation)) {
-                continue;
-            }
-            $catalogue->set((string) $translation->source, (string) $translation->target, $domain);
+        $this->extract($resource, $catalogue, $domain);
+
+        if (class_exists('Symfony\Component\Config\Resource\FileResource')) {
+            $catalogue->addResource(new FileResource($resource));
         }
-        $catalogue->addResource(new FileResource($resource));
 
         return $catalogue;
     }
 
-    /**
-     * Validates and parses the given file into a SimpleXMLElement
-     *
-     * @param string $file
-     *
-     * @return SimpleXMLElement
-     */
-    private function parseFile($file)
+    private function extract($resource, MessageCatalogue $catalogue, $domain)
     {
-        $internalErrors = libxml_use_internal_errors(true);
-        $disableEntities = libxml_disable_entity_loader(true);
-        libxml_clear_errors();
-
-        $dom = new \DOMDocument();
-        $dom->validateOnParse = true;
-        if (!@$dom->loadXML(file_get_contents($file), LIBXML_NONET | (defined('LIBXML_COMPACT') ? LIBXML_COMPACT : 0))) {
-            libxml_disable_entity_loader($disableEntities);
-
-            throw new \RuntimeException(implode("\n", $this->getXmlErrors($internalErrors)));
+        try {
+            $dom = XmlUtils::loadFile($resource);
+        } catch (\InvalidArgumentException $e) {
+            throw new InvalidResourceException(sprintf('Unable to load "%s": %s', $resource, $e->getMessage()), $e->getCode(), $e);
         }
 
-        libxml_disable_entity_loader($disableEntities);
-
-        foreach ($dom->childNodes as $child) {
-            if ($child->nodeType === XML_DOCUMENT_TYPE_NODE) {
-                libxml_use_internal_errors($internalErrors);
-
-                throw new \RuntimeException('Document types are not allowed.');
-            }
+        $xliffVersion = XliffUtils::getVersionNumber($dom);
+        if ($errors = XliffUtils::validateSchema($dom)) {
+            throw new InvalidResourceException(sprintf('Invalid resource provided: "%s"; Errors: %s', $xliffVersion, XliffUtils::getErrorsAsString($errors)));
         }
 
-        $location = str_replace('\\', '/', __DIR__).'/schema/dic/xliff-core/xml.xsd';
-        $parts = explode('/', $location);
-        if (0 === stripos($location, 'phar://')) {
-            $tmpfile = tempnam(sys_get_temp_dir(), 'sf2');
-            if ($tmpfile) {
-                copy($location, $tmpfile);
-                $parts = explode('/', str_replace('\\', '/', $tmpfile));
-            }
-        }
-        $drive = '\\' === DIRECTORY_SEPARATOR ? array_shift($parts).'/' : '';
-        $location = 'file:///'.$drive.implode('/', array_map('rawurlencode', $parts));
-
-        $source = file_get_contents(__DIR__.'/schema/dic/xliff-core/xliff-core-1.2-strict.xsd');
-        $source = str_replace('http://www.w3.org/2001/xml.xsd', $location, $source);
-
-        if (!@$dom->schemaValidateSource($source)) {
-            throw new \RuntimeException(implode("\n", $this->getXmlErrors($internalErrors)));
+        if ('1.2' === $xliffVersion) {
+            $this->extractXliff1($dom, $catalogue, $domain);
         }
 
-        $dom->normalizeDocument();
-
-        libxml_use_internal_errors($internalErrors);
-
-        return simplexml_import_dom($dom);
+        if ('2.0' === $xliffVersion) {
+            $this->extractXliff2($dom, $catalogue, $domain);
+        }
     }
 
     /**
-     * Returns the XML errors of the internal XML parser
+     * Extract messages and metadata from DOMDocument into a MessageCatalogue.
      *
-     * @return array  An array of errors
+     * @param \DOMDocument     $dom       Source to extract messages and metadata
+     * @param MessageCatalogue $catalogue Catalogue where we'll collect messages and metadata
+     * @param string           $domain    The domain
      */
-    private function getXmlErrors($internalErrors)
+    private function extractXliff1(\DOMDocument $dom, MessageCatalogue $catalogue, string $domain)
     {
-        $errors = array();
-        foreach (libxml_get_errors() as $error) {
-            $errors[] = sprintf('[%s %s] %s (in %s - line %d, column %d)',
-                LIBXML_ERR_WARNING == $error->level ? 'WARNING' : 'ERROR',
-                $error->code,
-                trim($error->message),
-                $error->file ? $error->file : 'n/a',
-                $error->line,
-                $error->column
-            );
+        $xml = simplexml_import_dom($dom);
+        $encoding = strtoupper($dom->encoding);
+
+        $xml->registerXPathNamespace('xliff', 'urn:oasis:names:tc:xliff:document:1.2');
+        foreach ($xml->xpath('//xliff:trans-unit') as $translation) {
+            $attributes = $translation->attributes();
+
+            if (!(isset($attributes['resname']) || isset($translation->source))) {
+                continue;
+            }
+
+            $source = isset($attributes['resname']) && $attributes['resname'] ? $attributes['resname'] : $translation->source;
+            // If the xlf file has another encoding specified, try to convert it because
+            // simple_xml will always return utf-8 encoded values
+            $target = $this->utf8ToCharset((string) (isset($translation->target) ? $translation->target : $translation->source), $encoding);
+
+            $catalogue->set((string) $source, $target, $domain);
+
+            $metadata = array();
+            if ($notes = $this->parseNotesMetadata($translation->note, $encoding)) {
+                $metadata['notes'] = $notes;
+            }
+
+            if (isset($translation->target) && $translation->target->attributes()) {
+                $metadata['target-attributes'] = array();
+                foreach ($translation->target->attributes() as $key => $value) {
+                    $metadata['target-attributes'][$key] = (string) $value;
+                }
+            }
+
+            if (isset($attributes['id'])) {
+                $metadata['id'] = (string) $attributes['id'];
+            }
+
+            $catalogue->setMetadata((string) $source, $metadata, $domain);
+        }
+    }
+
+    private function extractXliff2(\DOMDocument $dom, MessageCatalogue $catalogue, string $domain)
+    {
+        $xml = simplexml_import_dom($dom);
+        $encoding = strtoupper($dom->encoding);
+
+        $xml->registerXPathNamespace('xliff', 'urn:oasis:names:tc:xliff:document:2.0');
+
+        foreach ($xml->xpath('//xliff:unit') as $unit) {
+            foreach ($unit->segment as $segment) {
+                $source = $segment->source;
+
+                // If the xlf file has another encoding specified, try to convert it because
+                // simple_xml will always return utf-8 encoded values
+                $target = $this->utf8ToCharset((string) (isset($segment->target) ? $segment->target : $source), $encoding);
+
+                $catalogue->set((string) $source, $target, $domain);
+
+                $metadata = array();
+                if (isset($segment->target) && $segment->target->attributes()) {
+                    $metadata['target-attributes'] = array();
+                    foreach ($segment->target->attributes() as $key => $value) {
+                        $metadata['target-attributes'][$key] = (string) $value;
+                    }
+                }
+
+                if (isset($unit->notes)) {
+                    $metadata['notes'] = array();
+                    foreach ($unit->notes->note as $noteNode) {
+                        $note = array();
+                        foreach ($noteNode->attributes() as $key => $value) {
+                            $note[$key] = (string) $value;
+                        }
+                        $note['content'] = (string) $noteNode;
+                        $metadata['notes'][] = $note;
+                    }
+                }
+
+                $catalogue->setMetadata((string) $source, $metadata, $domain);
+            }
+        }
+    }
+
+    /**
+     * Convert a UTF8 string to the specified encoding.
+     */
+    private function utf8ToCharset(string $content, string $encoding = null): string
+    {
+        if ('UTF-8' !== $encoding && !empty($encoding)) {
+            return mb_convert_encoding($content, $encoding, 'UTF-8');
         }
 
-        libxml_clear_errors();
-        libxml_use_internal_errors($internalErrors);
+        return $content;
+    }
 
-        return $errors;
+    private function parseNotesMetadata(\SimpleXMLElement $noteElement = null, string $encoding = null): array
+    {
+        $notes = array();
+
+        if (null === $noteElement) {
+            return $notes;
+        }
+
+        /** @var \SimpleXMLElement $xmlNote */
+        foreach ($noteElement as $xmlNote) {
+            $noteAttributes = $xmlNote->attributes();
+            $note = array('content' => $this->utf8ToCharset((string) $xmlNote, $encoding));
+            if (isset($noteAttributes['priority'])) {
+                $note['priority'] = (int) $noteAttributes['priority'];
+            }
+
+            if (isset($noteAttributes['from'])) {
+                $note['from'] = (string) $noteAttributes['from'];
+            }
+
+            $notes[] = $note;
+        }
+
+        return $notes;
     }
 }

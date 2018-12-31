@@ -11,69 +11,73 @@
 
 namespace Symfony\Component\Validator;
 
-use Symfony\Component\Validator\Mapping\ClassMetadataFactory;
-use Symfony\Component\Validator\Exception\ValidatorException;
-use Symfony\Component\Validator\Mapping\BlackholeMetadataFactory;
-use Symfony\Component\Validator\Mapping\Loader\LoaderChain;
-use Symfony\Component\Validator\Mapping\ClassMetadataFactoryInterface;
-use Symfony\Component\Validator\Mapping\Cache\CacheInterface;
-use Symfony\Component\Validator\Mapping\Loader\StaticMethodLoader;
-use Symfony\Component\Validator\Mapping\Loader\YamlFileLoader;
-use Symfony\Component\Validator\Mapping\Loader\AnnotationLoader;
-use Symfony\Component\Validator\Mapping\Loader\YamlFilesLoader;
-use Symfony\Component\Validator\Mapping\Loader\XmlFileLoader;
-use Symfony\Component\Validator\Mapping\Loader\XmlFilesLoader;
-use Doctrine\Common\Annotations\Reader;
 use Doctrine\Common\Annotations\AnnotationReader;
 use Doctrine\Common\Annotations\CachedReader;
+use Doctrine\Common\Annotations\Reader;
 use Doctrine\Common\Cache\ArrayCache;
+use Symfony\Component\Translation\TranslatorInterface as LegacyTranslatorInterface;
+use Symfony\Component\Validator\Context\ExecutionContextFactory;
+use Symfony\Component\Validator\Exception\LogicException;
+use Symfony\Component\Validator\Exception\ValidatorException;
+use Symfony\Component\Validator\Mapping\Cache\CacheInterface;
+use Symfony\Component\Validator\Mapping\Factory\LazyLoadingMetadataFactory;
+use Symfony\Component\Validator\Mapping\Factory\MetadataFactoryInterface;
+use Symfony\Component\Validator\Mapping\Loader\AnnotationLoader;
+use Symfony\Component\Validator\Mapping\Loader\LoaderChain;
+use Symfony\Component\Validator\Mapping\Loader\LoaderInterface;
+use Symfony\Component\Validator\Mapping\Loader\StaticMethodLoader;
+use Symfony\Component\Validator\Mapping\Loader\XmlFileLoader;
+use Symfony\Component\Validator\Mapping\Loader\YamlFileLoader;
+use Symfony\Component\Validator\Util\LegacyTranslatorProxy;
+use Symfony\Component\Validator\Validator\RecursiveValidator;
+use Symfony\Contracts\Translation\LocaleAwareInterface;
+use Symfony\Contracts\Translation\TranslatorInterface;
+use Symfony\Contracts\Translation\TranslatorTrait;
 
 /**
  * The default implementation of {@link ValidatorBuilderInterface}.
  *
  * @author Bernhard Schussek <bschussek@gmail.com>
+ *
+ * @final since Symfony 4.2
  */
 class ValidatorBuilder implements ValidatorBuilderInterface
 {
-    /**
-     * @var array
-     */
     private $initializers = array();
-
-    /**
-     * @var array
-     */
+    private $loaders = array();
     private $xmlMappings = array();
-
-    /**
-     * @var array
-     */
     private $yamlMappings = array();
-
-    /**
-     * @var array
-     */
     private $methodMappings = array();
 
     /**
-     * @var Reader
+     * @var Reader|null
      */
-    private $annotationReader = null;
+    private $annotationReader;
 
     /**
-     * @var ClassMetadataFactoryInterface
+     * @var MetadataFactoryInterface|null
      */
     private $metadataFactory;
 
     /**
-     * @var ConstraintValidatorFactoryInterface
+     * @var ConstraintValidatorFactoryInterface|null
      */
     private $validatorFactory;
 
     /**
-     * @var CacheInterface
+     * @var CacheInterface|null
      */
     private $metadataCache;
+
+    /**
+     * @var TranslatorInterface|null
+     */
+    private $translator;
+
+    /**
+     * @var string|null
+     */
+    private $translationDomain;
 
     /**
      * {@inheritdoc}
@@ -189,8 +193,8 @@ class ValidatorBuilder implements ValidatorBuilderInterface
         }
 
         if (null === $annotationReader) {
-            if (!class_exists('Doctrine\Common\Annotations\AnnotationReader')) {
-                throw new \RuntimeException('Requested a ValidatorFactory with an AnnotationLoader, but the AnnotationReader was not found. You should add Doctrine Common to your project.');
+            if (!class_exists(AnnotationReader::class) || !class_exists(ArrayCache::class)) {
+                throw new LogicException('Enabling annotation based constraint mapping requires the packages doctrine/annotations and doctrine/cache to be installed.');
             }
 
             $annotationReader = new CachedReader(new AnnotationReader(), new ArrayCache());
@@ -214,9 +218,9 @@ class ValidatorBuilder implements ValidatorBuilderInterface
     /**
      * {@inheritdoc}
      */
-    public function setMetadataFactory(ClassMetadataFactoryInterface $metadataFactory)
+    public function setMetadataFactory(MetadataFactoryInterface $metadataFactory)
     {
-        if (count($this->xmlMappings) > 0 || count($this->yamlMappings) > 0 || count($this->methodMappings) > 0 || null !== $this->annotationReader) {
+        if (\count($this->xmlMappings) > 0 || \count($this->yamlMappings) > 0 || \count($this->methodMappings) > 0 || null !== $this->annotationReader) {
             throw new ValidatorException('You cannot set a custom metadata factory after adding custom mappings. You should do either of both.');
         }
 
@@ -233,7 +237,7 @@ class ValidatorBuilder implements ValidatorBuilderInterface
         if (null !== $this->metadataFactory) {
             throw new ValidatorException('You cannot set a custom metadata cache after setting a custom metadata factory. Configure your metadata factory instead.');
         }
-        
+
         $this->metadataCache = $cache;
 
         return $this;
@@ -252,46 +256,95 @@ class ValidatorBuilder implements ValidatorBuilderInterface
     /**
      * {@inheritdoc}
      */
+    public function setTranslator(LegacyTranslatorInterface $translator)
+    {
+        $this->translator = $translator instanceof LegacyTranslatorProxy ? $translator->getTranslator() : $translator;
+
+        return $this;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function setTranslationDomain($translationDomain)
+    {
+        $this->translationDomain = $translationDomain;
+
+        return $this;
+    }
+
+    /**
+     * @return $this
+     */
+    public function addLoader(LoaderInterface $loader)
+    {
+        $this->loaders[] = $loader;
+
+        return $this;
+    }
+
+    /**
+     * @return LoaderInterface[]
+     */
+    public function getLoaders()
+    {
+        $loaders = array();
+
+        foreach ($this->xmlMappings as $xmlMapping) {
+            $loaders[] = new XmlFileLoader($xmlMapping);
+        }
+
+        foreach ($this->yamlMappings as $yamlMappings) {
+            $loaders[] = new YamlFileLoader($yamlMappings);
+        }
+
+        foreach ($this->methodMappings as $methodName) {
+            $loaders[] = new StaticMethodLoader($methodName);
+        }
+
+        if ($this->annotationReader) {
+            $loaders[] = new AnnotationLoader($this->annotationReader);
+        }
+
+        return array_merge($loaders, $this->loaders);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function getValidator()
     {
         $metadataFactory = $this->metadataFactory;
 
         if (!$metadataFactory) {
-            $loaders = array();
-
-            if (count($this->xmlMappings) > 1) {
-                $loaders[] = new XmlFilesLoader($this->xmlMappings);
-            } elseif (1 === count($this->xmlMappings)) {
-                $loaders[] = new XmlFileLoader($this->xmlMappings[0]);
-            }
-
-            if (count($this->yamlMappings) > 1) {
-                $loaders[] = new YamlFilesLoader($this->yamlMappings);
-            } elseif (1 === count($this->yamlMappings)) {
-                $loaders[] = new YamlFileLoader($this->yamlMappings[0]);
-            }
-
-            foreach ($this->methodMappings as $methodName) {
-                $loaders[] = new StaticMethodLoader($methodName);
-            }
-
-            if ($this->annotationReader) {
-                $loaders[] = new AnnotationLoader($this->annotationReader);
-            }
-
+            $loaders = $this->getLoaders();
             $loader = null;
 
-            if (count($loaders) > 1) {
+            if (\count($loaders) > 1) {
                 $loader = new LoaderChain($loaders);
-            } elseif (1 === count($loaders)) {
+            } elseif (1 === \count($loaders)) {
                 $loader = $loaders[0];
             }
 
-            $metadataFactory = new ClassMetadataFactory($loader, $this->metadataCache);
+            $metadataFactory = new LazyLoadingMetadataFactory($loader, $this->metadataCache);
         }
 
         $validatorFactory = $this->validatorFactory ?: new ConstraintValidatorFactory();
+        $translator = $this->translator;
 
-        return new Validator($metadataFactory, $validatorFactory, $this->initializers);
+        if (null === $translator) {
+            $translator = new class() implements TranslatorInterface, LocaleAwareInterface {
+                use TranslatorTrait;
+            };
+            // Force the locale to be 'en' when no translator is provided rather than relying on the Intl default locale
+            // This avoids depending on Intl or the stub implementation being available. It also ensures that Symfony
+            // validation messages are pluralized properly even when the default locale gets changed because they are in
+            // English.
+            $translator->setLocale('en');
+        }
+
+        $contextFactory = new ExecutionContextFactory($translator, $this->translationDomain);
+
+        return new RecursiveValidator($contextFactory, $metadataFactory, $validatorFactory, $this->initializers);
     }
 }

@@ -21,24 +21,31 @@ use Symfony\Component\HttpKernel\DataCollector\DataCollectorInterface;
 class Profile
 {
     private $token;
-    private $collectors;
+
+    /**
+     * @var DataCollectorInterface[]
+     */
+    private $collectors = array();
+
     private $ip;
     private $method;
     private $url;
     private $time;
-    private $parent;
-    private $children;
+    private $statusCode;
 
     /**
-     * Constructor.
-     *
-     * @param string $token The token
+     * @var Profile
      */
-    public function __construct($token)
+    private $parent;
+
+    /**
+     * @var Profile[]
+     */
+    private $children = array();
+
+    public function __construct(string $token)
     {
         $this->token = $token;
-        $this->collectors = array();
-        $this->children = array();
     }
 
     /**
@@ -62,11 +69,9 @@ class Profile
     }
 
     /**
-     * Sets the parent token
-     *
-     * @param Profile $parent The parent Profile
+     * Sets the parent token.
      */
-    public function setParent(Profile $parent)
+    public function setParent(self $parent)
     {
         $this->parent = $parent;
     }
@@ -74,7 +79,7 @@ class Profile
     /**
      * Returns the parent profile.
      *
-     * @return Profile The parent profile
+     * @return self
      */
     public function getParent()
     {
@@ -84,7 +89,7 @@ class Profile
     /**
      * Returns the parent token.
      *
-     * @return null|string The parent token
+     * @return string|null The parent token
      */
     public function getParentToken()
     {
@@ -101,6 +106,11 @@ class Profile
         return $this->ip;
     }
 
+    /**
+     * Sets the IP.
+     *
+     * @param string $ip
+     */
     public function setIp($ip)
     {
         $this->ip = $ip;
@@ -139,28 +149,56 @@ class Profile
     /**
      * Returns the time.
      *
-     * @return string The time
+     * @return int The time
      */
     public function getTime()
     {
+        if (null === $this->time) {
+            return 0;
+        }
+
         return $this->time;
     }
 
+    /**
+     * @param int $time The time
+     */
     public function setTime($time)
     {
         $this->time = $time;
     }
 
     /**
+     * @param int $statusCode
+     */
+    public function setStatusCode($statusCode)
+    {
+        $this->statusCode = $statusCode;
+    }
+
+    /**
+     * @return int
+     */
+    public function getStatusCode()
+    {
+        return $this->statusCode;
+    }
+
+    /**
      * Finds children profilers.
      *
-     * @return array An array of Profile
+     * @return self[]
      */
     public function getChildren()
     {
         return $this->children;
     }
 
+    /**
+     * Sets children profiler.
+     *
+     * @param Profile[] $children
+     */
     public function setChildren(array $children)
     {
         $this->children = array();
@@ -170,16 +208,34 @@ class Profile
     }
 
     /**
-     * Adds the child token
-     *
-     * @param Profile $child The child Profile
+     * Adds the child token.
      */
-    public function addChild(Profile $child)
+    public function addChild(self $child)
     {
         $this->children[] = $child;
         $child->setParent($this);
     }
 
+    public function getChildByToken(string $token): ?self
+    {
+        foreach ($this->children as $child) {
+            if ($token === $child->getToken()) {
+                return $child;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Gets a Collector by name.
+     *
+     * @param string $name A collector name
+     *
+     * @return DataCollectorInterface A DataCollectorInterface instance
+     *
+     * @throws \InvalidArgumentException if the collector does not exist
+     */
     public function getCollector($name)
     {
         if (!isset($this->collectors[$name])) {
@@ -189,11 +245,21 @@ class Profile
         return $this->collectors[$name];
     }
 
+    /**
+     * Gets the Collectors associated with this profile.
+     *
+     * @return DataCollectorInterface[]
+     */
     public function getCollectors()
     {
         return $this->collectors;
     }
 
+    /**
+     * Sets the Collectors associated with this profile.
+     *
+     * @param DataCollectorInterface[] $collectors
+     */
     public function setCollectors(array $collectors)
     {
         $this->collectors = array();
@@ -202,11 +268,21 @@ class Profile
         }
     }
 
+    /**
+     * Adds a Collector.
+     */
     public function addCollector(DataCollectorInterface $collector)
     {
         $this->collectors[$collector->getName()] = $collector;
     }
 
+    /**
+     * Returns true if a Collector for the given name exists.
+     *
+     * @param string $name A collector name
+     *
+     * @return bool
+     */
     public function hasCollector($name)
     {
         return isset($this->collectors[$name]);
@@ -214,6 +290,6 @@ class Profile
 
     public function __sleep()
     {
-        return array('token', 'parent', 'children', 'collectors', 'ip', 'method', 'url', 'time');
+        return array('token', 'parent', 'children', 'collectors', 'ip', 'method', 'url', 'time', 'statusCode');
     }
 }

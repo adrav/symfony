@@ -9,21 +9,19 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Component\HttpFoundation\Tests;
+namespace Symfony\Component\HttpFoundation\Tests\Session\Attribute;
 
+use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Session\Attribute\NamespacedAttributeBag;
 
 /**
- * Tests NamespacedAttributeBag
+ * Tests NamespacedAttributeBag.
  *
  * @author Drak <drak@zikula.org>
  */
-class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
+class NamespacedAttributeBagTest extends TestCase
 {
-    /**
-     * @var array
-     */
-    private $array;
+    private $array = array();
 
     /**
      * @var NamespacedAttributeBag
@@ -43,8 +41,9 @@ class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
             'category' => array(
                 'fishing' => array(
                     'first' => 'cod',
-                    'second' => 'sole')
+                    'second' => 'sole',
                 ),
+            ),
         );
         $this->bag = new NamespacedAttributeBag('_sf2', '/');
         $this->bag->initialize($this->array);
@@ -86,6 +85,17 @@ class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
     /**
      * @dataProvider attributesProvider
      */
+    public function testHasNoSideEffect($key, $value, $expected)
+    {
+        $expected = json_encode($this->bag->all());
+        $this->bag->has($key);
+
+        $this->assertEquals($expected, json_encode($this->bag->all()));
+    }
+
+    /**
+     * @dataProvider attributesProvider
+     */
     public function testGet($key, $value, $expected)
     {
         $this->assertEquals($value, $this->bag->get($key));
@@ -95,6 +105,17 @@ class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
     {
         $this->assertNull($this->bag->get('user2.login'));
         $this->assertEquals('default', $this->bag->get('user2.login', 'default'));
+    }
+
+    /**
+     * @dataProvider attributesProvider
+     */
+    public function testGetNoSideEffect($key, $value, $expected)
+    {
+        $expected = json_encode($this->bag->all());
+        $this->bag->get($key);
+
+        $this->assertEquals($expected, json_encode($this->bag->all()));
     }
 
     /**
@@ -143,6 +164,16 @@ class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
         $this->assertNull($this->bag->get('user.login'));
     }
 
+    public function testRemoveExistingNamespacedAttribute()
+    {
+        $this->assertSame('cod', $this->bag->remove('category/fishing/first'));
+    }
+
+    public function testRemoveNonexistingNamespacedAttribute()
+    {
+        $this->assertNull($this->bag->remove('foo/bar/baz'));
+    }
+
     public function testClear()
     {
         $this->bag->clear();
@@ -160,8 +191,10 @@ class NamespacedAttributeBagTest extends \PHPUnit_Framework_TestCase
             array('csrf.token/b', '4321', true),
             array('category', array('fishing' => array('first' => 'cod', 'second' => 'sole')), true),
             array('category/fishing', array('first' => 'cod', 'second' => 'sole'), true),
+            array('category/fishing/missing/first', null, false),
             array('category/fishing/first', 'cod', true),
             array('category/fishing/second', 'sole', true),
+            array('category/fishing/missing/second', null, false),
             array('user2.login', null, false),
             array('never', null, false),
             array('bye', null, false),

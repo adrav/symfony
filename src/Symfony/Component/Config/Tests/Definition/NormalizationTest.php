@@ -11,25 +11,26 @@
 
 namespace Symfony\Component\Config\Tests\Definition;
 
-use Symfony\Component\Config\Definition\NodeInterface;
+use PHPUnit\Framework\TestCase;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
+use Symfony\Component\Config\Definition\NodeInterface;
 
-class NormalizerTest extends \PHPUnit_Framework_TestCase
+class NormalizationTest extends TestCase
 {
     /**
      * @dataProvider getEncoderTests
      */
     public function testNormalizeEncoders($denormalized)
     {
-        $tb = new TreeBuilder();
+        $tb = new TreeBuilder('root_name', 'array');
         $tree = $tb
-            ->root('root_name', 'array')
+            ->getRootNode()
                 ->fixXmlConfig('encoder')
                 ->children()
                     ->node('encoders', 'array')
                         ->useAttributeAsKey('class')
                         ->prototype('array')
-                            ->beforeNormalization()->ifString()->then(function($v) { return array('algorithm' => $v); })->end()
+                            ->beforeNormalization()->ifString()->then(function ($v) { return array('algorithm' => $v); })->end()
                             ->children()
                                 ->node('algorithm', 'scalar')->end()
                             ->end()
@@ -86,7 +87,7 @@ class NormalizerTest extends \PHPUnit_Framework_TestCase
             ),
         );
 
-        return array_map(function($v) {
+        return array_map(function ($v) {
             return array($v);
         }, $configs);
     }
@@ -96,9 +97,9 @@ class NormalizerTest extends \PHPUnit_Framework_TestCase
      */
     public function testAnonymousKeysArray($denormalized)
     {
-        $tb = new TreeBuilder();
+        $tb = new TreeBuilder('root', 'array');
         $tree = $tb
-            ->root('root', 'array')
+            ->getRootNode()
                 ->children()
                     ->node('logout', 'array')
                         ->fixXmlConfig('handler')
@@ -134,7 +135,7 @@ class NormalizerTest extends \PHPUnit_Framework_TestCase
             ),
         );
 
-        return array_map(function($v) { return array($v); }, $configs);
+        return array_map(function ($v) { return array($v); }, $configs);
     }
 
     /**
@@ -165,22 +166,41 @@ class NormalizerTest extends \PHPUnit_Framework_TestCase
             ),
         );
 
-        return array_map(function($v) { return array($v); }, $configs);
+        return array_map(function ($v) { return array($v); }, $configs);
     }
 
     /**
-     * @expectedException Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
+     * @expectedException \Symfony\Component\Config\Definition\Exception\InvalidConfigurationException
      * @expectedExceptionMessage The attribute "id" must be set for path "root.thing".
      */
     public function testNonAssociativeArrayThrowsExceptionIfAttributeNotSet()
     {
         $denormalized = array(
             'thing' => array(
-                array('foo', 'bar'), array('baz', 'qux')
-            )
+                array('foo', 'bar'), array('baz', 'qux'),
+            ),
         );
 
         $this->assertNormalized($this->getNumericKeysTestTree(), $denormalized, array());
+    }
+
+    public function testAssociativeArrayPreserveKeys()
+    {
+        $tb = new TreeBuilder('root', 'array');
+        $tree = $tb
+            ->getRootNode()
+                ->prototype('array')
+                    ->children()
+                        ->node('foo', 'scalar')->end()
+                    ->end()
+                ->end()
+            ->end()
+            ->buildTree()
+        ;
+
+        $data = array('first' => array('foo' => 'bar'));
+
+        $this->assertNormalized($tree, $data, $data);
     }
 
     public static function assertNormalized(NodeInterface $tree, $denormalized, $normalized)
@@ -190,9 +210,9 @@ class NormalizerTest extends \PHPUnit_Framework_TestCase
 
     private function getNumericKeysTestTree()
     {
-        $tb = new TreeBuilder();
+        $tb = new TreeBuilder('root', 'array');
         $tree = $tb
-            ->root('root', 'array')
+            ->getRootNode()
                 ->children()
                     ->node('thing', 'array')
                         ->useAttributeAsKey('id')

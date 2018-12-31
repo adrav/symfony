@@ -11,36 +11,37 @@
 
 namespace Symfony\Component\HttpKernel\Profiler;
 
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Exception\ConflictingHeadersException;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Profiler\ProfilerStorageInterface;
 use Symfony\Component\HttpKernel\DataCollector\DataCollectorInterface;
-use Symfony\Component\HttpKernel\Log\LoggerInterface;
+use Symfony\Component\HttpKernel\DataCollector\LateDataCollectorInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 /**
  * Profiler.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class Profiler
+class Profiler implements ResetInterface
 {
     private $storage;
-    private $collectors;
-    private $logger;
-    private $enabled;
 
     /**
-     * Constructor.
-     *
-     * @param ProfilerStorageInterface $storage A ProfilerStorageInterface instance
-     * @param LoggerInterface          $logger  A LoggerInterface instance
+     * @var DataCollectorInterface[]
      */
-    public function __construct(ProfilerStorageInterface $storage, LoggerInterface $logger = null)
+    private $collectors = array();
+
+    private $logger;
+    private $initiallyEnabled = true;
+    private $enabled = true;
+
+    public function __construct(ProfilerStorageInterface $storage, LoggerInterface $logger = null, bool $enable = true)
     {
         $this->storage = $storage;
         $this->logger = $logger;
-        $this->collectors = array();
-        $this->enabled = true;
+        $this->initiallyEnabled = $this->enabled = $enable;
     }
 
     /**
@@ -62,9 +63,7 @@ class Profiler
     /**
      * Loads the Profile for the given Response.
      *
-     * @param Response $response A Response instance
-     *
-     * @return Profile A Profile instance
+     * @return Profile|false A Profile instance
      */
     public function loadProfileFromResponse(Response $response)
     {
@@ -90,14 +89,19 @@ class Profiler
     /**
      * Saves a Profile.
      *
-     * @param Profile $profile A Profile instance
-     *
-     * @return Boolean
+     * @return bool
      */
     public function saveProfile(Profile $profile)
     {
+        // late collect
+        foreach ($profile->getCollectors() as $collector) {
+            if ($collector instanceof LateDataCollectorInterface) {
+                $collector->lateCollect();
+            }
+        }
+
         if (!($ret = $this->storage->write($profile)) && null !== $this->logger) {
-            $this->logger->warn('Unable to store the profiler information.');
+            $this->logger->warning('Unable to store the profiler information.', array('configured_storage' => \get_class($this->storage)));
         }
 
         return $ret;
@@ -112,58 +116,27 @@ class Profiler
     }
 
     /**
-     * Exports the current profiler data.
-     *
-     * @param Profile $profile A Profile instance
-     *
-     * @return string The exported data
-     */
-    public function export(Profile $profile)
-    {
-        return base64_encode(serialize($profile));
-    }
-
-    /**
-     * Imports data into the profiler storage.
-     *
-     * @param string $data A data string as exported by the export() method
-     *
-     * @return Profile A Profile instance
-     */
-    public function import($data)
-    {
-        $profile = unserialize(base64_decode($data));
-
-        if ($this->storage->read($profile->getToken())) {
-            return false;
-        }
-
-        $this->saveProfile($profile);
-
-        return $profile;
-    }
-
-    /**
      * Finds profiler tokens for the given criteria.
      *
-     * @param string $ip     The IP
-     * @param string $url    The URL
-     * @param string $limit  The maximum number of tokens to return
-     * @param string $method The request method
+     * @param string $ip         The IP
+     * @param string $url        The URL
+     * @param string $limit      The maximum number of tokens to return
+     * @param string $method     The request method
+     * @param string $start      The start date to search from
+     * @param string $end        The end date to search to
+     * @param string $statusCode The request status code
      *
      * @return array An array of tokens
+     *
+     * @see http://php.net/manual/en/datetime.formats.php for the supported date/time formats
      */
-    public function find($ip, $url, $limit, $method)
+    public function find($ip, $url, $limit, $method, $start, $end, $statusCode = null)
     {
-        return $this->storage->find($ip, $url, $limit, $method);
+        return $this->storage->find($ip, $url, $limit, $method, $this->getTimestamp($start), $this->getTimestamp($end), $statusCode);
     }
 
     /**
      * Collects data for the given Response.
-     *
-     * @param Request    $request   A Request instance
-     * @param Response   $response  A Response instance
-     * @param \Exception $exception An exception instance if the request threw one
      *
      * @return Profile|null A Profile instance or null if the profiler is disabled
      */
@@ -173,22 +146,39 @@ class Profiler
             return;
         }
 
-        $profile = new Profile(uniqid());
+        $profile = new Profile(substr(hash('sha256', uniqid(mt_rand(), true)), 0, 6));
         $profile->setTime(time());
         $profile->setUrl($request->getUri());
-        $profile->setIp($request->getClientIp());
         $profile->setMethod($request->getMethod());
+        $profile->setStatusCode($response->getStatusCode());
+        try {
+            $profile->setIp($request->getClientIp());
+        } catch (ConflictingHeadersException $e) {
+            $profile->setIp('Unknown');
+        }
+
+        if ($prevToken = $response->headers->get('X-Debug-Token')) {
+            $response->headers->set('X-Previous-Debug-Token', $prevToken);
+        }
 
         $response->headers->set('X-Debug-Token', $profile->getToken());
 
         foreach ($this->collectors as $collector) {
             $collector->collect($request, $response, $exception);
 
-            // forces collectors to become "read/only" (they loose their object dependencies)
-            $profile->addCollector(unserialize(serialize($collector)));
+            // we need to clone for sub-requests
+            $profile->addCollector(clone $collector);
         }
 
         return $profile;
+    }
+
+    public function reset()
+    {
+        foreach ($this->collectors as $collector) {
+            $collector->reset();
+        }
+        $this->enabled = $this->initiallyEnabled;
     }
 
     /**
@@ -204,7 +194,7 @@ class Profiler
     /**
      * Sets the Collectors associated with this profiler.
      *
-     * @param array $collectors An array of collectors
+     * @param DataCollectorInterface[] $collectors An array of collectors
      */
     public function set(array $collectors = array())
     {
@@ -216,8 +206,6 @@ class Profiler
 
     /**
      * Adds a Collector.
-     *
-     * @param DataCollectorInterface $collector A DataCollectorInterface instance
      */
     public function add(DataCollectorInterface $collector)
     {
@@ -229,7 +217,7 @@ class Profiler
      *
      * @param string $name A collector name
      *
-     * @return Boolean
+     * @return bool
      */
     public function has($name)
     {
@@ -252,5 +240,20 @@ class Profiler
         }
 
         return $this->collectors[$name];
+    }
+
+    private function getTimestamp($value)
+    {
+        if (null === $value || '' == $value) {
+            return;
+        }
+
+        try {
+            $value = new \DateTime(is_numeric($value) ? '@'.$value : $value);
+        } catch (\Exception $e) {
+            return;
+        }
+
+        return $value->getTimestamp();
     }
 }

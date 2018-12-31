@@ -11,8 +11,8 @@
 
 namespace Symfony\Component\HttpKernel\Tests\Fixtures;
 
-use Symfony\Component\HttpKernel\Kernel;
 use Symfony\Component\Config\Loader\LoaderInterface;
+use Symfony\Component\HttpKernel\Kernel;
 
 class KernelForTest extends Kernel
 {
@@ -23,23 +23,11 @@ class KernelForTest extends Kernel
 
     public function registerBundles()
     {
-    }
-
-    public function init()
-    {
-    }
-
-    public function registerBundleDirs()
-    {
+        return array();
     }
 
     public function registerContainerConfiguration(LoaderInterface $loader)
     {
-    }
-
-    public function initializeBundles()
-    {
-        parent::initializeBundles();
     }
 
     public function isBooted()
@@ -47,8 +35,13 @@ class KernelForTest extends Kernel
         return $this->booted;
     }
 
-    public function setIsBooted($value)
+    public function getCacheDir()
     {
-        $this->booted = (Boolean) $value;
+        return $this->getProjectDir().'/Tests/Fixtures/cache.'.$this->environment;
+    }
+
+    public function getLogDir()
+    {
+        return $this->getProjectDir().'/Tests/Fixtures/logs';
     }
 }

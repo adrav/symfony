@@ -11,7 +11,7 @@
 
 namespace Symfony\Component\Config\Loader;
 
-use Symfony\Component\Config\Exception\FileLoaderLoadException;
+use Symfony\Component\Config\Exception\LoaderLoadException;
 
 /**
  * Loader is the abstract class used by all built-in loaders.
@@ -23,9 +23,7 @@ abstract class Loader implements LoaderInterface
     protected $resolver;
 
     /**
-     * Gets the loader resolver.
-     *
-     * @return LoaderResolverInterface A LoaderResolverInterface instance
+     * {@inheritdoc}
      */
     public function getResolver()
     {
@@ -33,9 +31,7 @@ abstract class Loader implements LoaderInterface
     }
 
     /**
-     * Sets the loader resolver.
-     *
-     * @param LoaderResolverInterface $resolver A LoaderResolverInterface instance
+     * {@inheritdoc}
      */
     public function setResolver(LoaderResolverInterface $resolver)
     {
@@ -45,23 +41,25 @@ abstract class Loader implements LoaderInterface
     /**
      * Imports a resource.
      *
-     * @param mixed  $resource A Resource
-     * @param string $type     The resource type
+     * @param mixed       $resource A resource
+     * @param string|null $type     The resource type or null if unknown
+     *
+     * @return mixed
      */
     public function import($resource, $type = null)
     {
-        $this->resolve($resource)->load($resource, $type);
+        return $this->resolve($resource, $type)->load($resource, $type);
     }
 
     /**
      * Finds a loader able to load an imported resource.
      *
-     * @param mixed  $resource A Resource
-     * @param string $type     The resource type
+     * @param mixed       $resource A resource
+     * @param string|null $type     The resource type or null if unknown
      *
-     * @return LoaderInterface A LoaderInterface instance
+     * @return $this|LoaderInterface
      *
-     * @throws FileLoaderLoadException if no loader is found
+     * @throws LoaderLoadException If no loader is found
      */
     public function resolve($resource, $type = null)
     {
@@ -72,7 +70,7 @@ abstract class Loader implements LoaderInterface
         $loader = null === $this->resolver ? false : $this->resolver->resolve($resource, $type);
 
         if (false === $loader) {
-            throw new FileLoaderLoadException($resource);
+            throw new LoaderLoadException($resource, null, null, null, $type);
         }
 
         return $loader;
